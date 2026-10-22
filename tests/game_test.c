@@ -94,6 +94,20 @@ int main(void) {
   restored = shopper;
   restored.cans = 1;
   assert(!valid_progress(&restored));
+  /* Reset a progressed game, then verify the state that will be saved. */
+  shopper.leaves = 123;
+  shopper.unlocked = 1;
+  shopper.location = 1;
+  memset(shopper.wet, 1, sizeof(shopper.wet));
+  new_progress(&shopper);
+  assert(valid_progress(&shopper));
+  assert(shopper.leaves == 0 && shopper.unlocked == 0 && shopper.location == 0);
+  assert(shopper.hats == 1 && shopper.cans == 1 && shopper.hat == 0 && shopper.can == 0);
+  for (int g = 0; g < 2; g++)
+    for (int i = 0; i < N; i++) assert(shopper.wet[g][i] == 0);
+  assert(decode_progress(&restored, &shopper, sizeof(shopper)));
+  assert(memcmp(&restored, &shopper, sizeof(shopper)) == 0);
+  puts("PASS: full progress reset and reload");
   puts("PASS: shop purchases, insufficient funds, free re-equipping, all five "
        "items, migration, cosmetic persistence");
   puts("PASS: combos, no repeat rewards, price, purchase once, completion, "

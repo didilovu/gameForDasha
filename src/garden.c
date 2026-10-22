@@ -18,7 +18,7 @@ static Progress progress;
 static wchar_t save_path[MAX_PATH], temp_path[MAX_PATH];
 static int congratulations = 0, save_failed = 0, combo_count = 0;
 static float combo_time = 0, pulse_clock = 0;
-static int f_down = 0, shop_open = 0;
+static int f_down = 0, shop_open = 0, reset_prompt = 0;
 static wchar_t shop_message[100] = L"Выбери вещь — покупка сразу надевается!";
 static void save_game(void) {
   if (!save_path[0]) {
@@ -390,6 +390,7 @@ static void render(HDC dc) {
                           : L"Лунный сад: 30 листиков · Комбо: 2+ новых цветка "
                             L"за один полив → +2 листика",
         16, RGB(78, 100, 73));
+  label(dc, 775, 615, L"F2 — новая игра", 16, RGB(78, 100, 73));
   if (combo_time > 0) {
     swprintf(count, 64, L"КОМБО ×%d! +2 листика", combo_count);
     label(dc, 340, 100, count, 24, RGB(51, 97, 81));
@@ -428,7 +429,7 @@ static void update(HWND hwnd) {
     return;
   if (combo_time > 0)
     combo_time -= dt;
-  if (congratulations || shop_open)
+  if (congratulations || shop_open || reset_prompt)
     return;
   float dx = 0, dy = 0;
   if (GetAsyncKeyState('W') & 0x8000)
@@ -484,6 +485,34 @@ static void update(HWND hwnd) {
   f_down = down;
 }
 static void key_action(HWND hwnd, WPARAM key) {
+  if (key == VK_F2) {
+    reset_prompt = 1;
+    int answer = MessageBoxW(
+        hwnd,
+        L"Начать новую игру?\n\nВсе листики, шляпки, лейки, открытые "
+        L"локации и политые цветы будут сброшены. Отменить это нельзя.",
+        L"Новая игра", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+    reset_prompt = 0;
+    previous = GetTickCount();
+    if (answer != IDYES)
+      return;
+    new_progress(&progress);
+    congratulations = 0;
+    shop_open = 0;
+    combo_count = 0;
+    combo_time = 0;
+    walk = 0;
+    facing = 1;
+    init();
+    save_game();
+    if (save_failed)
+      MessageBoxW(hwnd,
+                  L"Новая игра начата, но сохранить сброс на диск не удалось. "
+                  L"При следующем запуске может вернуться старый прогресс.",
+                  L"Ошибка сохранения", MB_OK | MB_ICONWARNING);
+    InvalidateRect(hwnd, NULL, FALSE);
+    return;
+  }
   if (key == VK_ESCAPE) {
     if (shop_open) {
       shop_open = 0;
