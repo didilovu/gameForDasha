@@ -390,7 +390,8 @@ static void render(HDC dc) {
                           : L"Лунный сад: 30 листиков · Комбо: 2+ новых цветка "
                             L"за один полив → +2 листика",
         16, RGB(78, 100, 73));
-  label(dc, 775, 615, L"F2 — новая игра", 16, RGB(78, 100, 73));
+  box(dc, 735, 611, 216, 27, RGB(219, 228, 193));
+  label(dc, 746, 615, L"Новая игра · N / F2", 16, RGB(62, 88, 57));
   if (combo_time > 0) {
     swprintf(count, 64, L"КОМБО ×%d! +2 листика", combo_count);
     label(dc, 340, 100, count, 24, RGB(51, 97, 81));
@@ -485,7 +486,7 @@ static void update(HWND hwnd) {
   f_down = down;
 }
 static void key_action(HWND hwnd, WPARAM key) {
-  if (key == VK_F2) {
+  if (key == VK_F2 || key == 'N') {
     reset_prompt = 1;
     int answer = MessageBoxW(
         hwnd,
@@ -581,6 +582,12 @@ static void key_action(HWND hwnd, WPARAM key) {
 }
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
   switch (m) {
+  case WM_LBUTTONUP: {
+    int x = (short)LOWORD(l), y = (short)HIWORD(l);
+    if (x >= 735 && x < 951 && y >= 611 && y < 638)
+      key_action(h, VK_F2);
+    return 0;
+  }
   case WM_KEYDOWN:
     if (!(l & (1L << 30)))
       key_action(h, w);
@@ -632,7 +639,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show) {
   RECT r = {0, 0, W, H};
   DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
   AdjustWindowRect(&r, style, FALSE);
-  HWND h = CreateWindowW(wc.lpszClassName, L"Цветочный сад", style,
+  HWND h = CreateWindowW(wc.lpszClassName, L"Цветочный сад · 1.3.1", style,
                          CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
                          r.bottom - r.top, NULL, NULL, inst, NULL);
   if (!h)
