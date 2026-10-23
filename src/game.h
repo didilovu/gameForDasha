@@ -2,7 +2,8 @@
 #define GARDEN_GAME_H
 #include <string.h>
 #define N 72
-#define GARDEN_PRICE 30
+#define GARDEN_PRICE 1500
+#define WATER_SECONDS 2.0f
 #define SHOP_ITEMS 5
 typedef struct {
   float x, y, water;
@@ -14,7 +15,12 @@ typedef struct {
   unsigned char wet[2][N];
   unsigned hats, cans;
   int hat, can;
+  int beds[2];
 } Progress;
+typedef struct {
+  int bed;
+  float elapsed;
+} Watering;
 typedef struct {
   unsigned magic;
   int leaves, unlocked, location;
@@ -27,6 +33,7 @@ static void new_progress(Progress *p) {
   p->magic = SAVE_MAGIC;
   p->hats = 1;
   p->cans = 1;
+  p->beds[0] = p->beds[1] = 1;
 }
 static int valid_progress(const Progress *p) {
   if (p->magic != SAVE_MAGIC || p->leaves < 0 || p->leaves > 1000000 ||
@@ -41,6 +48,18 @@ static int valid_progress(const Progress *p) {
       p->hat < 0 || p->hat > 3 || p->can < 0 || p->can > 2 ||
       !(p->hats & (1u << p->hat)) || !(p->cans & (1u << p->can)))
     return 0;
+  for (int g = 0; g < 2; g++) {
+    if (p->beds[g] < 1 || p->beds[g] > 6)
+      return 0;
+    for (int b = 0; b < 6; b++) {
+      for (int i = 0; i < 12; i++) {
+        if (b >= p->beds[g] && p->wet[g][b * 12 + i])
+          return 0;
+        if (p->wet[g][b * 12 + i] != p->wet[g][b * 12])
+          return 0;
+      }
+    }
+  }
   return 1;
 }
 /* Import old saves without changing their balance or already unlocked garden.
@@ -52,8 +71,18 @@ static int decode_progress(Progress *out, const void *data, size_t size) {
     memcpy(&p, data, sizeof(LegacyProgress));
   else if (size == sizeof(Progress))
     memcpy(&p, data, sizeof(Progress));
+  else if (size == sizeof(Progress) - sizeof(p.beds))
+    memcpy(&p, data, size);
   else
     return 0;
+  if (size != sizeof(Progress)) {
+    /* The new planting economy starts with one dry bed per garden. */
+    for (int g = 0; g < 2; g++)
+      for (int i = 0; i < N; i++)
+        if (p.wet[g][i] > 1)
+          return 0;
+    memset(p.wet, 0, sizeof(p.wet));
+  }
   if (!valid_progress(&p))
     return 0;
   *out = p;
@@ -84,20 +113,63 @@ static int count_watered(const Progress *p) {
     n += p->wet[p->location][i];
   return n;
 }
-/* A pulse pays once, only for two or more previously dry flowers. */
-static int water_pulse(Progress *p, Flower *flowers, float x, float y) {
-  int n = 0;
-  for (int i = 0; i < N; i++) {
-    float dx = flowers[i].x - x, dy = flowers[i].y - y;
-    if (dx * dx + dy * dy < 10000 && !p->wet[p->location][i]) {
-      p->wet[p->location][i] = 1;
-      flowers[i].water = 1;
-      n++;
+static int bed_price(const Progress *p) {
+  static const int prices[5] = {3, 8, 18, 32, 50};
+  int n = p->beds[p->location];
+  return n < 6 ? prices[n - 1] : 0;
+}
+static int buy_bed(Progress *p) {
+  int price = bed_price(p);
+  if (!price || p->leaves < price)
+    return 0;
+  p->leaves -= price;
+  p->beds[p->location]++;
+  return 1;
+}
+/* Only a full uninterrupted watering of one dry, planted bed pays. */
+static int water_tick(Progress *p, Flower *flowers, Watering *w, float x,
+                      float y, int held, float dt) {
+  int target = -1;
+  float distance = 10000;
+  if (held)
+    for (int b = 0; b < p->beds[p->location]; b++) {
+      if (p->wet[p->location][b * 12])
+        continue;
+      float cx = 0, cy = 0;
+      for (int j = 0; j < 12; j++) {
+        cx += flowers[b * 12 + j].x / 12;
+        cy += flowers[b * 12 + j].y / 12;
+      }
+      float dx = x - cx, dy = y - cy, d = dx * dx + dy * dy;
+      if (d < distance) {
+        distance = d;
+        target = b;
+      }
     }
+  if (target < 0) {
+    w->bed = -1;
+    w->elapsed = 0;
+    return 0;
   }
-  if (n >= 2 && p->leaves <= 999998)
-    p->leaves += 2;
-  return n;
+  if (w->bed != target) {
+    w->bed = target;
+    w->elapsed = 0;
+  }
+  if (dt <= 0 || dt > .1f)
+    return 0;
+  w->elapsed += dt;
+  if (w->elapsed + 0.00001f < WATER_SECONDS)
+    return 0;
+  for (int j = 0; j < 12; j++) {
+    p->wet[p->location][target * 12 + j] = 1;
+    flowers[target * 12 + j].water = 1;
+  }
+  int reward = p->beds[p->location];
+  if (p->leaves <= 1000000 - reward)
+    p->leaves += reward;
+  w->bed = -1;
+  w->elapsed = 0;
+  return reward;
 }
 static int buy_garden(Progress *p) {
   if (p->unlocked || p->leaves < GARDEN_PRICE)

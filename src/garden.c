@@ -16,9 +16,10 @@ static int facing = 1, watered = 0;
 static DWORD previous;
 static Progress progress;
 static wchar_t save_path[MAX_PATH], temp_path[MAX_PATH];
-static int congratulations = 0, save_failed = 0, combo_count = 0;
-static float combo_time = 0, pulse_clock = 0;
-static int f_down = 0, shop_open = 0, reset_prompt = 0;
+static int congratulations = 0, save_failed = 0, earned_leaves = 0;
+static float reward_time = 0;
+static Watering watering = {-1, 0};
+static int shop_open = 0, reset_prompt = 0;
 static wchar_t shop_message[100] = L"Выбери вещь — покупка сразу надевается!";
 static void save_game(void) {
   if (!save_path[0]) {
@@ -113,8 +114,7 @@ static void init(void) {
   px = 480;
   py = 355;
   pour = 0;
-  pulse_clock = 0;
-  f_down = 0;
+  watering = (Watering){-1, 0};
 }
 static void hat_art(HDC dc, int x, int y, int style) {
   if (!style)
@@ -203,10 +203,10 @@ static void shop_panel(HDC dc) {
                             L"Звёздная шляпка", L"Медная лейка",
                             L"Лунная лейка"};
   for (int i = 0; i < SHOP_ITEMS; i++) {
-    int y = 197 + i * 59, index = i < 3 ? i + 1 : i - 2;
+    int y = 197 + i * 49, index = i < 3 ? i + 1 : i - 2;
     unsigned mask = i < 3 ? progress.hats : progress.cans;
     int equipped = (i < 3 ? progress.hat : progress.can) == index;
-    box(dc, 166, y - 2, 634, 54,
+    box(dc, 166, y - 2, 634, 45,
         i % 2 ? RGB(242, 231, 205) : RGB(247, 237, 216));
     if (i < 3)
       hat_art(dc, 208, y + 18, index);
@@ -222,6 +222,13 @@ static void shop_panel(HDC dc) {
       swprintf(text, 140, L"%d листиков", item_prices[i]);
     label(dc, 596, y + 11, text, 17, RGB(110, 111, 81));
   }
+  if (progress.beds[progress.location] < 6)
+    swprintf(text, 140, L"B · Цветы для клумбы №%d — %d листиков",
+             progress.beds[progress.location] + 1, bed_price(&progress));
+  else
+    lstrcpyW(text, L"Все клумбы в этом саду уже засажены!");
+  box(dc, 166, 450, 634, 40, RGB(218, 231, 188));
+  label(dc, 180, 460, text, 20, RGB(68, 91, 63));
   label(dc, 176, 501, shop_message, 18, RGB(110, 98, 80));
   label(dc, 176, 534,
         L"1–5 — купить / надеть · 6 — снять шляпку · 7 — обычная лейка", 16,
@@ -340,7 +347,14 @@ static void render(HDC dc) {
       oval(dc, sx, sy, 3, 2, RGB(155, 129, 92));
     }
   }
-  for (int i = 0; i < N; i++) {
+  for (int b = progress.beds[progress.location]; b < 6; b++) {
+    Flower *f = &flowers[b * 12];
+    box(dc, (int)f->x + 30, (int)f->y + 25, 3, 28, RGB(114, 86, 62));
+    box(dc, (int)f->x - 8, (int)f->y + 14, 100, 23, RGB(239, 221, 177));
+    label(dc, (int)f->x - 3, (int)f->y + 17, L"Не посажено", 14,
+          RGB(119, 95, 67));
+  }
+  for (int i = 0; i < progress.beds[progress.location] * 12; i++) {
     Flower *f = &flowers[i];
     int x = (int)f->x, y = (int)f->y;
     oval(dc, x - 7, y - 2, 19, 6, RGB(126, 130, 88));
@@ -380,21 +394,30 @@ static void render(HDC dc) {
         L"Esc — выход",
         16, RGB(115, 124, 101));
   wchar_t count[64];
-  swprintf(count, 64, L"Полито: %d / %d", watered, N);
+  swprintf(count, 64, L"Клумбы: %d / %d", watered / 12,
+           progress.beds[progress.location]);
   label(dc, 785, 12, count, 18, RGB(78, 100, 73));
   swprintf(count, 64, L"Листики: %d", progress.leaves);
   label(dc, 785, 36, count, 18, RGB(78, 100, 73));
   box(dc, 0, 610, W, 30, RGB(249, 243, 225));
   label(dc, 24, 615,
         progress.unlocked ? L"Лунный сад открыт! Tab — сменить сад"
-                          : L"Лунный сад: 30 листиков · Комбо: 2+ новых цветка "
-                            L"за один полив → +2 листика",
+                          : L"Лунный сад: 1500 · Удерживай F · R — новый полив "
+                            L"после завершения",
         16, RGB(78, 100, 73));
   box(dc, 735, 611, 216, 27, RGB(219, 228, 193));
   label(dc, 746, 615, L"Новая игра · N / F2", 16, RGB(62, 88, 57));
-  if (combo_time > 0) {
-    swprintf(count, 64, L"КОМБО ×%d! +2 листика", combo_count);
+  if (reward_time > 0) {
+    swprintf(count, 64, L"Клумба полита! +%d листиков", earned_leaves);
     label(dc, 340, 100, count, 24, RGB(51, 97, 81));
+  }
+  if (watering.bed >= 0 && watering.elapsed > 0) {
+    int bx = (int)px - 79, by = (int)py - 117;
+    box(dc, bx, by, 158, 32, RGB(255, 247, 222));
+    label(dc, bx + 7, by + 2, L"Поливаем... держи F", 14, RGB(68, 91, 63));
+    box(dc, bx + 6, by + 21, 146, 6, RGB(203, 211, 180));
+    box(dc, bx + 6, by + 21, (int)(146 * watering.elapsed / WATER_SECONDS), 6,
+        RGB(110, 173, 183));
   }
   if (save_failed)
     label(dc, 24, 584, L"Не удалось сохранить прогресс на диск", 17,
@@ -404,18 +427,19 @@ static void render(HDC dc) {
   if (congratulations) {
     box(dc, 170, 180, 620, 290, RGB(112, 143, 104));
     box(dc, 178, 188, 604, 274, RGB(255, 248, 229));
-    label(dc, 260, 210, L"Поздравляем! Весь сад полит!", 28, RGB(78, 100, 73));
+    label(dc, 260, 210, L"Все посаженные клумбы политы!", 28, RGB(78, 100, 73));
     label(dc, 235, 258,
-          progress.location ? L"Звёздные цветы сияют благодаря тебе!"
-                            : L"Каждый цветочек получил свою капельку заботы.",
+          progress.location
+              ? L"Звёздные цветы сияют благодаря тебе!"
+              : L"Покупай новые цветы в лавке — зарабатывай больше!",
           20, RGB(100, 116, 90));
     swprintf(count, 64, L"Твои листики: %d", progress.leaves);
     label(dc, 360, 298, count, 23, RGB(78, 100, 73));
     label(dc, 220, 341,
           progress.unlocked ? L"Tab — перейти в другой сад"
-                            : L"L — купить лунный сад за 30 листиков",
+                            : L"L — купить лунный сад за 1500 листиков",
           21, RGB(78, 100, 73));
-    label(dc, 220, 380, L"R — вырастить новые цветы и заработать ещё", 20,
+    label(dc, 220, 380, L"R — следующий полив, покупки сохранятся", 20,
           RGB(100, 116, 90));
     label(dc, 220, 417, L"Enter — вернуться в сад", 18, RGB(100, 116, 90));
   }
@@ -426,12 +450,18 @@ static void update(HWND hwnd) {
   previous = now;
   if (dt > .05f)
     dt = .05f;
-  if (GetForegroundWindow() != hwnd)
+  if (GetForegroundWindow() != hwnd) {
+    watering = (Watering){-1, 0};
+    pour = 0;
     return;
-  if (combo_time > 0)
-    combo_time -= dt;
-  if (congratulations || shop_open || reset_prompt)
+  }
+  if (reward_time > 0)
+    reward_time -= dt;
+  if (congratulations || shop_open || reset_prompt) {
+    watering = (Watering){-1, 0};
+    pour = 0;
     return;
+  }
   float dx = 0, dy = 0;
   if (GetAsyncKeyState('W') & 0x8000)
     dy--;
@@ -462,31 +492,24 @@ static void update(HWND hwnd) {
     py = 528;
   }
   int down = (GetAsyncKeyState('F') & 0x8000) != 0;
-  if (down) {
+  int reward = water_tick(&progress, flowers, &watering, px, py, down, dt);
+  if (down && watering.bed >= 0)
     pour += dt;
-    pulse_clock -= dt;
-    if (!f_down || pulse_clock <= 0) {
-      pulse_clock = .4f;
-      int n = water_pulse(&progress, flowers, px, py);
-      if (n >= 2) {
-        combo_count = n;
-        combo_time = 2.0f;
-      }
-      watered = count_watered(&progress);
-      if (n) {
-        if (watered == N)
-          congratulations = 1;
-        save_game();
-      }
-    }
-  } else {
+  else
     pour = 0;
-    pulse_clock = 0;
+  if (reward) {
+    earned_leaves = reward;
+    reward_time = 2;
+    watered = count_watered(&progress);
+    if (watered == progress.beds[progress.location] * 12)
+      congratulations = 1;
+    save_game();
   }
-  f_down = down;
 }
 static void key_action(HWND hwnd, WPARAM key) {
   if (key == VK_F2 || key == 'N') {
+    watering = (Watering){-1, 0};
+    pour = 0;
     reset_prompt = 1;
     int answer = MessageBoxW(
         hwnd,
@@ -500,8 +523,8 @@ static void key_action(HWND hwnd, WPARAM key) {
     new_progress(&progress);
     congratulations = 0;
     shop_open = 0;
-    combo_count = 0;
-    combo_time = 0;
+    earned_leaves = 0;
+    reward_time = 0;
     walk = 0;
     facing = 1;
     init();
@@ -523,6 +546,19 @@ static void key_action(HWND hwnd, WPARAM key) {
     return;
   }
   if (shop_open) {
+    if (key == 'B') {
+      int b = progress.beds[progress.location];
+      if (buy_bed(&progress)) {
+        watered = count_watered(&progress);
+        swprintf(shop_message, 100,
+                 L"Клумба №%d посажена! Теперь за полив — %d листиков.", b + 1,
+                 b + 1);
+        save_game();
+      } else
+        lstrcpyW(shop_message, b == 6 ? L"Все клумбы уже открыты."
+                                      : L"Не хватает листиков на новые цветы.");
+      return;
+    }
     if (key == 'E') {
       shop_open = 0;
       return;
@@ -533,7 +569,7 @@ static void key_action(HWND hwnd, WPARAM key) {
         save_game();
       } else
         lstrcpyW(shop_message,
-                 L"Не хватает листиков. Приходи после новых комбо!");
+                 L"Не хватает листиков. Возвращайся после полива!");
     } else if (key == '6') {
       progress.hat = 0;
       save_game();
@@ -544,6 +580,7 @@ static void key_action(HWND hwnd, WPARAM key) {
     return;
   }
   if (key == 'E' && near_shop() && !congratulations) {
+    watering = (Watering){-1, 0};
     shop_open = 1;
     pour = 0;
     walk = 0;
@@ -558,24 +595,24 @@ static void key_action(HWND hwnd, WPARAM key) {
     if (buy_garden(&progress)) {
       progress.location = 1;
       congratulations = 0;
-      combo_time = 0;
+      reward_time = 0;
       init();
       save_game();
     } else
       MessageBoxW(hwnd,
-                  L"Нужно 30 листиков. Поливай сразу несколько новых цветов: "
-                  L"каждое комбо даёт 2 листика!",
+                  L"Нужно 1500 листиков. Покупай клумбы у торговца: чем их "
+                  L"больше, тем выше награда за каждый полив!",
                   L"Лунный сад", MB_OK | MB_ICONINFORMATION);
   } else if (key == VK_TAB && progress.unlocked) {
     progress.location = 1 - progress.location;
     congratulations = 0;
-    combo_time = 0;
+    reward_time = 0;
     init();
     save_game();
-  } else if (key == 'R' && watered == N) {
+  } else if (key == 'R' && watered == progress.beds[progress.location] * 12) {
     memset(progress.wet[progress.location], 0, N);
     congratulations = 0;
-    combo_time = 0;
+    reward_time = 0;
     init();
     save_game();
   }
@@ -639,7 +676,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show) {
   RECT r = {0, 0, W, H};
   DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
   AdjustWindowRect(&r, style, FALSE);
-  HWND h = CreateWindowW(wc.lpszClassName, L"Цветочный сад · 1.3.1", style,
+  HWND h = CreateWindowW(wc.lpszClassName, L"Цветочный сад · 2.0.0", style,
                          CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
                          r.bottom - r.top, NULL, NULL, inst, NULL);
   if (!h)
