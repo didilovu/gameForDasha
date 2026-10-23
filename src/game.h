@@ -1,5 +1,6 @@
 #ifndef GARDEN_GAME_H
 #define GARDEN_GAME_H
+#include <stddef.h>
 #include <string.h>
 #define N 72
 #define GARDEN_PRICE 1500
@@ -16,6 +17,7 @@ typedef struct {
   unsigned hats, cans;
   int hat, can;
   int beds[2];
+  unsigned day;
 } Progress;
 typedef struct {
   int bed;
@@ -34,8 +36,11 @@ static void new_progress(Progress *p) {
   p->hats = 1;
   p->cans = 1;
   p->beds[0] = p->beds[1] = 1;
+  p->day = 1;
 }
 static int valid_progress(const Progress *p) {
+  if (p->day < 1 || p->day > 1000000)
+    return 0;
   if (p->magic != SAVE_MAGIC || p->leaves < 0 || p->leaves > 1000000 ||
       p->unlocked < 0 || p->unlocked > 1 || p->location < 0 ||
       p->location > p->unlocked)
@@ -71,11 +76,11 @@ static int decode_progress(Progress *out, const void *data, size_t size) {
     memcpy(&p, data, sizeof(LegacyProgress));
   else if (size == sizeof(Progress))
     memcpy(&p, data, sizeof(Progress));
-  else if (size == sizeof(Progress) - sizeof(p.beds))
+  else if (size == offsetof(Progress, beds) || size == offsetof(Progress, day))
     memcpy(&p, data, size);
   else
     return 0;
-  if (size != sizeof(Progress)) {
+  if (size < offsetof(Progress, day)) {
     /* The new planting economy starts with one dry bed per garden. */
     for (int g = 0; g < 2; g++)
       for (int i = 0; i < N; i++)
@@ -170,6 +175,11 @@ static int water_tick(Progress *p, Flower *flowers, Watering *w, float x,
   w->bed = -1;
   w->elapsed = 0;
   return reward;
+}
+static void next_day(Progress *p) {
+  memset(p->wet, 0, sizeof(p->wet));
+  if (p->day < 1000000)
+    p->day++;
 }
 static int buy_garden(Progress *p) {
   if (p->unlocked || p->leaves < GARDEN_PRICE)

@@ -86,14 +86,14 @@ int main(void) {
   w = (Watering){-1, 0};
   for (int goal = 2; goal <= 6; goal++) {
     while (economy.leaves < bed_price(&economy)) {
-      memset(economy.wet[0], 0, N);
+      next_day(&economy);
       for (int b = 0; b < economy.beds[0]; b++)
         assert(finish(&economy, &w, b) == economy.beds[0]);
     }
     assert(buy_bed(&economy));
   }
   while (economy.leaves < GARDEN_PRICE) {
-    memset(economy.wet[0], 0, N);
+    next_day(&economy);
     for (int b = 0; b < 6; b++)
       assert(finish(&economy, &w, b) == 6);
   }
@@ -110,16 +110,37 @@ int main(void) {
   assert(valid_progress(&decoded) && memcmp(&decoded, &p, sizeof(p)) == 0);
   /* Both previous save formats retain balance, purchases and garden access. */
   p.leaves = 99;
-  assert(decode_progress(&decoded, &p, sizeof(p) - sizeof(p.beds)));
+  assert(decode_progress(&decoded, &p, offsetof(Progress, beds)));
   assert(decoded.leaves == 99 && decoded.unlocked && decoded.hats == 15 &&
          decoded.cans == 7);
   assert(decoded.beds[0] == 1 && decoded.beds[1] == 1 &&
          count_watered(&decoded) == 0);
+  /* Version 2.0 already has planting: preserve all beds and watering. */
+  assert(decode_progress(&decoded, &p, offsetof(Progress, day)));
+  assert(decoded.day == 1 && decoded.beds[0] == p.beds[0] &&
+         decoded.beds[1] == p.beds[1]);
+  assert(memcmp(decoded.wet, p.wet, sizeof(p.wet)) == 0);
+  /* Sleeping changes only day and watering; both gardens refresh together. */
+  Progress before_sleep = p;
+  next_day(&p);
+  assert(p.day == before_sleep.day + 1 && valid_progress(&p));
+  for (int g = 0; g < 2; g++)
+    for (int i = 0; i < N; i++)
+      assert(p.wet[g][i] == 0);
+  Progress expected = before_sleep;
+  expected.day++;
+  memset(expected.wet, 0, sizeof(expected.wet));
+  assert(memcmp(&expected, &p, sizeof(p)) == 0);
+  assert(decode_progress(&decoded, &p, sizeof(p)) && decoded.day == p.day);
+  p = before_sleep;
   LegacyProgress legacy;
   memcpy(&legacy, &p, sizeof(legacy));
   assert(decode_progress(&decoded, &legacy, sizeof(legacy)));
   assert(decoded.leaves == 99 && decoded.hats == 1 && decoded.beds[0] == 1);
   assert(!decode_progress(&decoded, &legacy, sizeof(legacy) - 1));
+  decoded = p;
+  decoded.day = 0;
+  assert(!valid_progress(&decoded));
   decoded = p;
   decoded.beds[0] = 7;
   assert(!valid_progress(&decoded));
@@ -135,6 +156,8 @@ int main(void) {
   assert(!valid_progress(&decoded));
   new_progress(&p);
   assert(valid_progress(&p) && p.leaves == 0 && p.beds[0] == 1 && !p.unlocked);
+  puts("PASS: sleep refreshes both gardens, preserves purchases and balance, "
+       "day persistence, version 2.0 migration");
   puts("PASS: timed watering, interruptions, locked beds, no duplicate "
        "rewards, replay income");
   puts("PASS: increasing prices, all six reward tiers, purchases, 1500-leaf "
